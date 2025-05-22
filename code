@@ -1,0 +1,189 @@
+import discord
+from discord.ext import commands
+import asyncio
+import os
+
+intents = discord.Intents.default()
+intents.message_content = True
+intents.reactions = True
+intents.members = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Define role weights by ROLE ID
+ROLE_WEIGHTS = {
+    1208814380997673004: 10,  # Prime Minister
+    1208814380997673003: 8,  # Leader of the Opposition
+    1208814380905664609: 5,   # Other role
+}
+
+# Role IDs
+ALLOWED_ROLE_ID = 1208814381094277129  # Role allowed to start/end votes
+SPEAKER_ROLE_ID = 1208814381094277129  # Role allowed to break ties
+
+# Check if member has the allowed role
+def has_allowed_role(member):
+    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
+
+# Check if member has the speaker role
+def has_speaker_role(member):
+    return any(role.id == SPEAKER_ROLE_ID for role in member.roles)
+
+VOTE_EMOJIS = {
+    "✅": "Yes",
+    "❌": "No",
+    "🤷": "Abstain"
+}
+
+# Track active vote state
+active_vote = {
+    "message": None,
+    "motion": "",
+    "channel": None,
+    "open": False,
+    "vote_counts": {"Yes": 0, "No": 0, "Abstain": 0},
+    "tie": False
+}
+
+@bot.event
+async def on_ready():
+    print(f'✅ Bot is online as {bot.user}')
+
+@bot.command(name="motion")
+async def motion(ctx, *, motion_text: str):
+    if not has_allowed_role(ctx.author):
+        await ctx.send("🚫 You don't have permission to start a motion.")
+        return
+
+    if active_vote["open"]:
+        await ctx.send("⚠️ A vote is already in progress. Use `!end` first.")
+        return
+
+    embed = discord.Embed(
+        title="🗳️ Parliamentary Motion",
+        description=motion_text,
+        color=0x1ABC9C
+    )
+    embed.set_footer(text="React with ✅, ❌, or 🤷. Voting is open until manually ended with !end.")
+    vote_msg = await ctx.send(embed=embed)
+
+    for emoji in VOTE_EMOJIS:
+        await vote_msg.add_reaction(emoji)
+
+    # Save the active vote info
+    active_vote["message"] = vote_msg
+    active_vote["motion"] = motion_text
+    active_vote["channel"] = ctx.channel
+    active_vote["open"] = True
+    active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
+    active_vote["tie"] = False
+
+@bot.command(name="end")
+async def end(ctx):
+    if not has_allowed_role(ctx.author):
+        await ctx.send("🚫 You don't have permission to end a vote.")
+        return
+
+    if not active_vote["open"]:
+        await ctx.send("❌ There is no active vote to end.")
+        return
+
+    vote_msg = await active_vote["channel"].fetch_message(active_vote["message"].id)
+
+    vote_counts = {"Yes": 0, "No": 0, "Abstain": 0}
+    voted_users = set()
+
+    for reaction in vote_msg.reactions:
+        if reaction.emoji not in VOTE_EMOJIS:
+            continue
+
+        async for user in reaction.users():
+            if user.bot or user.id in voted_users:
+                continue
+
+            member = vote_msg.guild.get_member(user.id)
+            if not member:
+                continue
+
+            user_weight = 0
+            for role in member.roles:
+                if role.id in ROLE_WEIGHTS:
+                    user_weight = max(user_weight, ROLE_WEIGHTS[role.id])
+
+            vote_choice = VOTE_EMOJIS[reaction.emoji]
+            vote_counts[vote_choice] += user_weight
+            voted_users.add(user.id)
+
+    # Store the vote counts
+    active_vote["vote_counts"] = vote_counts
+
+    # Determine outcome
+    if vote_counts["Yes"] > vote_counts["No"] and vote_counts["Abstain"] < vote_counts["Yes"]:
+        outcome = "**✅ Motion passes.**"
+    elif vote_counts["Yes"] == vote_counts["No"]:
+        outcome = "**⚖️ Tie detected. Speaker must cast a tie-breaking vote using `!tiebreak yes` or `!tiebreak no`.**"
+        active_vote["tie"] = True
+    else:
+        outcome = "**❌ Motion fails.**"
+
+    result = (
+        f"**Results for:** {active_vote['motion']}\n"
+        f"✅ Yes: {vote_counts['Yes']}\n"
+        f"❌ No: {vote_counts['No']}\n"
+        f"🤷 Abstain: {vote_counts['Abstain']}\n\n"
+        f"{outcome}"
+    )
+    await ctx.send(result)
+
+    # If no tie, clear the vote state
+    if not active_vote["tie"]:
+        active_vote["message"] = None
+        active_vote["motion"] = ""
+        active_vote["channel"] = None
+        active_vote["open"] = False
+        active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
+        active_vote["tie"] = False
+
+@bot.command(name="tiebreak")
+async def tiebreak(ctx, choice: str):
+    if not has_speaker_role(ctx.author):
+        await ctx.send("🚫 You don't have permission to cast a tie-breaking vote.")
+        return
+
+    if not active_vote["open"] or not active_vote["tie"]:
+        await ctx.send("❌ There is no tie to break at this time.")
+        return
+
+    choice = choice.lower()
+    if choice not in ["yes", "no"]:
+        await ctx.send("⚠️ Invalid choice. Use `!tiebreak yes` or `!tiebreak no`.")
+        return
+
+    # Add the speaker's vote
+    active_vote["vote_counts"][choice.capitalize()] += 1
+
+    # Determine outcome
+    if active_vote["vote_counts"]["Yes"] > active_vote["vote_counts"]["No"]:
+        outcome = "**✅ Motion passes after tie-break.**"
+    else:
+        outcome = "**❌ Motion fails after tie-break.**"
+
+    result = (
+        f"**Tie-breaker Result for:** {active_vote['motion']}\n"
+        f"✅ Yes: {active_vote['vote_counts']['Yes']}\n"
+        f"❌ No: {active_vote['vote_counts']['No']}\n"
+        f"🤷 Abstain: {active_vote['vote_counts']['Abstain']}\n\n"
+        f"{outcome}"
+    )
+    await ctx.send(result)
+
+    # Clear the vote state
+    active_vote["message"] = None
+    active_vote["motion"] = ""
+    active_vote["channel"] = None
+    active_vote["open"] = False
+    active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
+    active_vote["tie"] = False
+
+# Run the bot
+bot.run(os.getenv("BOT_TOKEN"))
