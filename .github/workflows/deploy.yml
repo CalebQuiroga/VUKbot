@@ -13,22 +13,26 @@ jobs:
       - name: ✅ Checkout code
         uses: actions/checkout@v3
 
+      - name: 🔁 Change directory to bot folder
+        run: cd VUKbot
+        shell: bash
+
       - name: 🐍 Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
       - name: 📦 Install dependencies
-        run: |
-          pip install -r requirements.txt
+        working-directory: ./VUKbot
+        run: pip install -r requirements.txt
 
       - name: 🛠️ Compile Python files
-        run: |
-          python -m compileall .
+        working-directory: ./VUKbot
+        run: python -m compileall .
 
       - name: 🚀 Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: VUKBot
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .
+          package: ./VUKbot
