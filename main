@@ -2,7 +2,24 @@ import discord
 from discord.ext import commands
 import asyncio
 import os
+from flask import Flask
+from threading import Thread
 
+# Keep-alive server for Azure
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
 intents.reactions = True
@@ -10,32 +27,25 @@ intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# Define role weights by ROLE ID
+# Role Weights
 ROLE_WEIGHTS = {
     1208814380997673004: 10,  # Prime Minister
-    1208814380997673003: 8,  # Leader of the Opposition
-    1208814380905664609: 5,   # Other role
+    1208814380997673003: 8,   # Leader of the Opposition
+    1208814380905664609: 5    # Other role
 }
 
-# Role IDs
-ALLOWED_ROLE_ID = 1208814381094277129  # Role allowed to start/end votes
-SPEAKER_ROLE_ID = 1208814381094277129  # Role allowed to break ties
+ALLOWED_ROLE_ID = 1208814381094277129
+SPEAKER_ROLE_ID = 1208814381094277129
+LOG_CHANNEL_ID = None  # Replace with actual log channel ID if desired
 
-# Check if member has the allowed role
-def has_allowed_role(member):
-    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
-
-# Check if member has the speaker role
-def has_speaker_role(member):
-    return any(role.id == SPEAKER_ROLE_ID for role in member.roles)
-
+# Vote Emojis
 VOTE_EMOJIS = {
     "✅": "Yes",
     "❌": "No",
     "🤷": "Abstain"
 }
 
-# Track active vote state
+# Active Vote State
 active_vote = {
     "message": None,
     "motion": "",
@@ -45,10 +55,25 @@ active_vote = {
     "tie": False
 }
 
+# Helpers
+def has_allowed_role(member):
+    return any(role.id == ALLOWED_ROLE_ID for role in member.roles)
+
+def has_speaker_role(member):
+    return any(role.id == SPEAKER_ROLE_ID for role in member.roles)
+
+async def log_vote_result(text):
+    if LOG_CHANNEL_ID:
+        log_channel = bot.get_channel(LOG_CHANNEL_ID)
+        if log_channel:
+            await log_channel.send(text)
+
+# Events
 @bot.event
 async def on_ready():
     print(f'✅ Bot is online as {bot.user}')
 
+# Commands
 @bot.command(name="motion")
 async def motion(ctx, *, motion_text: str):
     if not has_allowed_role(ctx.author):
@@ -70,13 +95,14 @@ async def motion(ctx, *, motion_text: str):
     for emoji in VOTE_EMOJIS:
         await vote_msg.add_reaction(emoji)
 
-    # Save the active vote info
-    active_vote["message"] = vote_msg
-    active_vote["motion"] = motion_text
-    active_vote["channel"] = ctx.channel
-    active_vote["open"] = True
-    active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
-    active_vote["tie"] = False
+    active_vote.update({
+        "message": vote_msg,
+        "motion": motion_text,
+        "channel": ctx.channel,
+        "open": True,
+        "vote_counts": {"Yes": 0, "No": 0, "Abstain": 0},
+        "tie": False
+    })
 
 @bot.command(name="end")
 async def end(ctx):
@@ -88,17 +114,23 @@ async def end(ctx):
         await ctx.send("❌ There is no active vote to end.")
         return
 
-    vote_msg = await active_vote["channel"].fetch_message(active_vote["message"].id)
+    try:
+        vote_msg = await active_vote["channel"].fetch_message(active_vote["message"].id)
+    except discord.NotFound:
+        await ctx.send("❌ Vote message not found.")
+        return
 
     vote_counts = {"Yes": 0, "No": 0, "Abstain": 0}
-    voted_users = set()
+    user_votes = {}
 
     for reaction in vote_msg.reactions:
         if reaction.emoji not in VOTE_EMOJIS:
             continue
 
         async for user in reaction.users():
-            if user.bot or user.id in voted_users:
+            if user.bot:
+                continue
+            if user.id in user_votes:
                 continue
 
             member = vote_msg.guild.get_member(user.id)
@@ -112,12 +144,10 @@ async def end(ctx):
 
             vote_choice = VOTE_EMOJIS[reaction.emoji]
             vote_counts[vote_choice] += user_weight
-            voted_users.add(user.id)
+            user_votes[user.id] = vote_choice
 
-    # Store the vote counts
     active_vote["vote_counts"] = vote_counts
 
-    # Determine outcome
     if vote_counts["Yes"] > vote_counts["No"] and vote_counts["Abstain"] < vote_counts["Yes"]:
         outcome = "**✅ Motion passes.**"
     elif vote_counts["Yes"] == vote_counts["No"]:
@@ -134,15 +164,17 @@ async def end(ctx):
         f"{outcome}"
     )
     await ctx.send(result)
+    await log_vote_result(result)
 
-    # If no tie, clear the vote state
     if not active_vote["tie"]:
-        active_vote["message"] = None
-        active_vote["motion"] = ""
-        active_vote["channel"] = None
-        active_vote["open"] = False
-        active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
-        active_vote["tie"] = False
+        active_vote.update({
+            "message": None,
+            "motion": "",
+            "channel": None,
+            "open": False,
+            "vote_counts": {"Yes": 0, "No": 0, "Abstain": 0},
+            "tie": False
+        })
 
 @bot.command(name="tiebreak")
 async def tiebreak(ctx, choice: str):
@@ -159,10 +191,8 @@ async def tiebreak(ctx, choice: str):
         await ctx.send("⚠️ Invalid choice. Use `!tiebreak yes` or `!tiebreak no`.")
         return
 
-    # Add the speaker's vote
     active_vote["vote_counts"][choice.capitalize()] += 1
 
-    # Determine outcome
     if active_vote["vote_counts"]["Yes"] > active_vote["vote_counts"]["No"]:
         outcome = "**✅ Motion passes after tie-break.**"
     else:
@@ -176,14 +206,17 @@ async def tiebreak(ctx, choice: str):
         f"{outcome}"
     )
     await ctx.send(result)
+    await log_vote_result(result)
 
-    # Clear the vote state
-    active_vote["message"] = None
-    active_vote["motion"] = ""
-    active_vote["channel"] = None
-    active_vote["open"] = False
-    active_vote["vote_counts"] = {"Yes": 0, "No": 0, "Abstain": 0}
-    active_vote["tie"] = False
+    active_vote.update({
+        "message": None,
+        "motion": "",
+        "channel": None,
+        "open": False,
+        "vote_counts": {"Yes": 0, "No": 0, "Abstain": 0},
+        "tie": False
+    })
 
-# Run the bot
+# Run everything
+keep_alive()
 bot.run(os.getenv("BOT_TOKEN"))
