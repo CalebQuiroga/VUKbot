@@ -3,7 +3,7 @@ name: Deploy Discord Bot to Azure
 on:
   push:
     branches:
-      - main  # Change if your default branch is not "main"
+      - main
 
 jobs:
   build-and-deploy:
@@ -13,12 +13,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Show directory contents
+      - name: Diagnose directory contents
         run: |
-          echo "Working directory:"
+          echo "🔎 PWD (working directory):"
           pwd
-          echo "Files in directory:"
+          echo "📂 Top-level files:"
           ls -la
+          echo "🔍 Searching for requirements.txt recursively:"
+          find . -name "requirements.txt"
 
       - name: Set up Python
         uses: actions/setup-python@v4
