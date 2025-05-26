@@ -10,34 +10,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: ✅ Checkout code
         uses: actions/checkout@v3
 
-      - name: Show base working directory
+      - name: 🧭 Show working directory contents
         run: |
-          echo "🔎 Current working directory:"
+          echo "Current path:"
           pwd
-          echo "📂 Files in repo root:"
+          echo "Files at root:"
           ls -la
-          echo "📂 Files inside VUKbot folder:"
+          echo "Files in ./VUKbot:"
           ls -la ./VUKbot
 
-      - name: Set up Python
+      - name: 🐍 Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 📦 Install dependencies
         run: |
           cd VUKbot
           pip install -r requirements.txt
 
-      - name: Compile Python files (optional)
+      - name: 🛠️ Compile Python files
         run: |
           cd VUKbot
           python -m compileall .
 
-      - name: Deploy to Azure Web App
+      - name: 🚀 Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: VUKBot
