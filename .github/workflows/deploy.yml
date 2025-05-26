@@ -19,7 +19,7 @@ jobs:
           python-version: '3.11'
 
       - name: 📦 Install dependencies
-        working-directory: VUKbot
+        working-directory: ./VUKbot
         run: |
           pip install -r requirements.txt
 
