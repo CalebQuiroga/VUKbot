@@ -19,14 +19,10 @@ jobs:
           python-version: '3.11'
 
       - name: 📦 Install dependencies
-        working-directory: ./VUKbot
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r VUKbot/requirements.txt
 
       - name: 🛠️ Compile Python files
-        working-directory: VUKbot
-        run: |
-          python -m compileall .
+        run: python -m compileall VUKbot
 
       - name: 🚀 Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
