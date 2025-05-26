@@ -3,7 +3,7 @@ name: Deploy Discord Bot to Azure
 on:
   push:
     branches:
-      - main
+      - main  # Change this if your default branch is different
 
 jobs:
   build-and-deploy:
@@ -13,14 +13,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Diagnose directory contents
+      - name: Show base working directory
         run: |
-          echo "🔎 PWD (working directory):"
+          echo "🔎 Current working directory:"
           pwd
-          echo "📂 Top-level files:"
+          echo "📂 Files in repo root:"
           ls -la
-          echo "🔍 Searching for requirements.txt recursively:"
-          find . -name "requirements.txt"
+          echo "📂 Files inside VUKbot folder:"
+          ls -la ./VUKbot
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -29,21 +29,17 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [ -f requirements.txt ]; then
-            echo "✅ Installing from requirements.txt"
-            pip install -r requirements.txt
-          else
-            echo "❌ requirements.txt not found!"
-            exit 1
-          fi
+          cd VUKbot
+          pip install -r requirements.txt
 
       - name: Compile Python files (optional)
-        run: python -m compileall .
+        run: |
+          cd VUKbot
+          python -m compileall .
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v2
         with:
           app-name: VUKBot
-          slot-name: production
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: .
+          package: ./VUKbot
